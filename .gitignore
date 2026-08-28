@@ -44,6 +44,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code local (per-user) settings
+.claude/settings.local.json
+
 # Test / coverage
 coverage/
 .pytest_cache/

@@ -1,0 +1,41 @@
+#!/bin/sh
+# ADR decision-discipline gate.
+# Ensures commits that touch core code reference the Decision Log (DEC-xxx)
+# or explicitly declare that no architectural decision is involved.
+#
+# Activate once with:  git config core.hooksPath .githooks
+
+msg_file="$1"
+msg="$(cat "$msg_file")"
+
+# Files staged for this commit
+staged="$(git diff --cached --name-only)"
+
+# Only enforce when core architecture code changes
+core="$(printf '%s\n' "$staged" | grep -E '^(backend/app/|frontend/src/)' || true)"
+[ -z "$core" ] && exit 0
+
+# Pass if the message references a decision or explicitly opts out
+if printf '%s' "$msg" | grep -qiE 'DEC-[0-9]+|Decisions:[[:space:]]*(none|n/a)'; then
+  exit 0
+fi
+
+cat >&2 <<'EOF'
+------------------------------------------------------------------------
+✋ Commit blocked by the ADR decision-discipline gate.
+
+This commit changes core code (backend/app or frontend/src) but does not
+reference the Decision Log. Please either:
+
+  • cite the decision(s) this work implements or changes, e.g.
+        Decisions: DEC-003
+    and update the Decision Log if any decision was made/changed; or
+
+  • if no architectural decision is involved, add the trailer:
+        Decisions: none
+
+Decision Log:
+  https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/1015810
+------------------------------------------------------------------------
+EOF
+exit 1
