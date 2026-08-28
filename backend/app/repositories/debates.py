@@ -101,16 +101,25 @@ def get_debate(session: Session, debate_id: str) -> Debate | None:
     if debate is None:
         return None
 
-    debate.turns.sort(key=lambda t: (t.round, t.created_at))
+    # round is the primary transcript order; created_at then id break ties
+    # deterministically for turns persisted concurrently within a round (T4).
+    debate.turns.sort(key=lambda t: (t.round, t.created_at, t.id))
     return debate
 
 
 def list_debates(session: Session) -> list[Debate]:
-    """All debates, newest first. No ownership filter (DEC-005)."""
+    """All debates, newest first. No ownership filter (DEC-005).
+
+    ``created_at`` (naive utcnow) frequently ties between rows created in the
+    same microsecond, so ``id`` is a deterministic tiebreaker — the order is
+    stable across calls. The uuid hex isn't time-ordered, so ties resolve
+    arbitrarily-but-consistently; under DEC-005 (single-user, debates created
+    minutes apart) genuine same-instant ties don't occur in practice.
+    """
     return list(
         session.scalars(
             select(Debate)
-            .order_by(Debate.created_at.desc())
+            .order_by(Debate.created_at.desc(), Debate.id.desc())
             .options(
                 selectinload(Debate.personas),
                 selectinload(Debate.turns),

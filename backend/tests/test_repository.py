@@ -67,17 +67,33 @@ def test_get_missing_returns_none(session):
 
 
 def test_list_debates_newest_first(session):
-    first = repo.create_debate(session, decision="First")
-    second = repo.create_debate(session, decision="Second")
-    # Nudge created_at so ordering is deterministic regardless of clock resolution.
-    second.created_at = first.created_at.replace(microsecond=0)
-    first.created_at = first.created_at.replace(year=first.created_at.year - 1)
+    older = repo.create_debate(session, decision="Older")
+    newer = repo.create_debate(session, decision="Newer")
+    # Force a real time gap so recency (not the tiebreaker) drives the order.
+    older.created_at = older.created_at.replace(year=older.created_at.year - 1)
     session.flush()
 
     listed = repo.list_debates(session)
     assert len(listed) == 2
-    assert listed[0].id == second.id
-    assert listed[1].id == first.id
+    assert listed[0].id == newer.id
+    assert listed[1].id == older.id
+
+
+def test_list_debates_tied_timestamps_are_deterministic(session):
+    # created_at ties often in practice (utcnow microsecond collisions); the id
+    # tiebreaker must give a stable, repeatable order rather than an arbitrary one.
+    a = repo.create_debate(session, decision="A")
+    b = repo.create_debate(session, decision="B")
+    shared = a.created_at
+    a.created_at = shared
+    b.created_at = shared
+    session.flush()
+
+    order = [d.id for d in repo.list_debates(session)]
+    assert order == [d.id for d in repo.list_debates(session)]  # repeatable
+    assert set(order) == {a.id, b.id}
+    # desc-by-id: the lexicographically larger hex id comes first.
+    assert order == sorted([a.id, b.id], reverse=True)
 
 
 def test_list_debates_empty(session):
