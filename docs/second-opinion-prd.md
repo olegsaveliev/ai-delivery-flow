@@ -1,7 +1,7 @@
 # Second Opinion — Product Requirements Document (MVP)
 
 > **Status:** Draft for approval · **Owner:** PM · **Date:** 2026-08-28
-> **Source of truth for scope:** the accepted [Decision Log](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/1015810) (DEC-001…DEC-009).
+> **Source of truth for scope:** the accepted [Decision Log](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/1015810) (DEC-001…DEC-010).
 > This PRD **references** the design docs rather than duplicating them:
 > [Product Overview](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/884737) ·
 > [Architecture HLD & LLD](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/917506) ·
@@ -100,6 +100,7 @@ Proposed (not a hard commitment; builds on existing scaffold):
 - **LLM:** Anthropic Claude — personas `claude-sonnet-5`, judge `claude-opus-4-8`, utilities `claude-haiku-4-5-20251001` (DEC-007; confirm IDs at build time)
 - **Streaming:** Server-Sent Events
 - **Persistence:** SQLite (dev) → Postgres (future) (DEC-008)
+- **Design:** Artifacts prototypes → Claude Design component library, synced via `/design-sync` (DEC-010)
 - **Config:** `ANTHROPIC_API_KEY` via `.env`
 
 ## 9. Security & Configuration
@@ -180,11 +181,14 @@ Data model (Debate / Persona / Turn / Verdict) and SSE event contracts are speci
 - [Decision Log (DEC-001…DEC-009)](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/1015810)
 - Jira project: **KAN**
 
-## Proposed Epics (for the approval gate — not yet created)
+## Epics (created in Jira under KAN)
 
-These will become Jira Epics under KAN **after** you approve this PRD:
+Stories are sliced from these epics with the `spec` skill (e.g. EPIC-A / KAN-1 → KAN-5…KAN-10).
+EPIC-E was added after the original A–D scope to own design/UX — see DEC-010; its design
+execution is deferred until the frontend phase.
 
-1. **EPIC-A — Debate Orchestration Engine** (backend loop: personas, rounds, judge, persistence, guardrails)
-2. **EPIC-B — Live Streaming** (SSE endpoint + event contract)
-3. **EPIC-C — Web Experience** (Ask → live debate → verdict → history UI)
-4. **EPIC-D — Polish, Accessibility & Observability** (states, dark mode, a11y, cost/latency logging)
+1. **EPIC-A — Debate Orchestration Engine** ([KAN-1](https://osavelyev.atlassian.net/browse/KAN-1)) — backend loop: personas, rounds, judge, persistence, guardrails · *Phase 1*
+2. **EPIC-B — Live Streaming** ([KAN-2](https://osavelyev.atlassian.net/browse/KAN-2)) — SSE endpoint + event contract · *Phase 2*
+3. **EPIC-C — Web Experience** ([KAN-3](https://osavelyev.atlassian.net/browse/KAN-3)) — Ask → live debate → verdict → history UI · *Phase 3*
+4. **EPIC-D — Polish, Accessibility & Observability** ([KAN-4](https://osavelyev.atlassian.net/browse/KAN-4)) — states, dark mode, a11y, cost/latency logging · *Phase 4*
+5. **EPIC-E — Design System & UX** ([KAN-11](https://osavelyev.atlassian.net/browse/KAN-11)) — design language + core screen mockups + Claude Design component library (feeds EPIC-C) · *before Phase 3, parallel to 1–2*
