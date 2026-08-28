@@ -52,6 +52,10 @@ coverage/
 .pytest_cache/
 .nyc_output/
 
+# Databases (local SQLite — see DEC-008)
+*.db
+second_opinion.db
+
 # Misc
 .cache/
 tmp/

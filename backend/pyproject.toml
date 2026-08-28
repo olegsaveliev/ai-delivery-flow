@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.5",
     "anthropic>=0.40",
     "python-dotenv>=1.0",
+    "SQLAlchemy>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,11 @@ include = ["app*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom relies on calling Depends() in argument
+# defaults; whitelist it so B008 doesn't flag the framework's intended pattern.
+extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
