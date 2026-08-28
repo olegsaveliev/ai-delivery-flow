@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     cors_origins: str = "http://localhost:5173"
+    database_url: str = "sqlite:///./second_opinion.db"
 
     @property
     def cors_origins_list(self) -> list[str]:
