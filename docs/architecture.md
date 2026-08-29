@@ -130,7 +130,15 @@ round N reads rounds `< N`. FK cascade deletes children with a debate.
 - `src/types/` — shared TypeScript types (mirror `backend/app/schemas`)
 - `src/components/`, `src/pages/`, `src/hooks/` — UI building blocks (design owned by EPIC-E, DEC-010)
 
-The live threaded debate UI (DEC-006) and streaming are **not built yet** (EPIC-B/C).
+The live threaded debate UI (DEC-006) and streaming are **not built yet** (EPIC-B/C). Today
+`frontend/` is only a bare Vite + TS scaffold — `src/components`, `src/hooks`, `src/pages` are
+empty `.gitkeep` placeholders; there is no UI.
+
+> **Frontend gate (DEC-010).** Design comes before frontend. EPIC-C (Web Experience, KAN-3)
+> does **not** start until EPIC-E (Design System & UX, KAN-11) delivers the design: E-T1 tokens
+> and the **E-T2 approved look** are the gate, with E-T3 states/a11y and the E-T4/E-T5 components
+> syncing into `frontend/src/components` via `/design-sync`. Backend (EPIC-A/B) is headless and
+> runs independently — the gate binds the UI only. See `docs/specs/epic-e-design-system-ux.md`.
 
 ## Conventions
 
@@ -156,6 +164,7 @@ Newest first. One row per architecture-affecting change; keep in lockstep with t
 
 | Date | Change | Refs |
 | --- | --- | --- |
+| 2026-08-29 | Documented the **frontend gate** (design-before-frontend): EPIC-C waits on EPIC-E; recorded that `frontend/` is a bare scaffold with no UI. No code change — spec/doc alignment after slicing KAN-11 into KAN-12…16. | KAN-11 · DEC-010 |
 | 2026-08-29 | Debate HTTP API: `/api/debates` router (POST create-and-run → orchestrator → judge → persist; GET one/list; DELETE) + `debate` request/response schemas + request-scoped `get_db`. Watch-only, no auth. Marked API ✅. | KAN-9 · DEC-004/005/008 |
 | 2026-08-29 | Judge synthesis: Opus `judge(debate)` → schema-validated `Verdict` with exactly one repair retry, persisted via `persist_verdict`; added `LLMService.complete` (single-shot, raises) and the `verdict` schema. Marked judge/verdict ✅. | KAN-8 · DEC-007 |
 | 2026-08-29 | Establish this file as the living source of truth + Confluence mirror; refresh to reflect the implemented debate engine (orchestrator, personas, guardrails, LLM tiers, SQLite models/repositories) and mark judge/API as planned; add Implementation Status + Change Log. Reconciled the Confluence HLD/LLD's stale "open questions" against DEC-001/003/004/005 and fixed its round algorithm to DEC-003. | KAN-7, DEC-003 |
