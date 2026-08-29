@@ -41,16 +41,16 @@ Layered FastAPI service. The debate engine is the heart of the product.
 | `app/main.py` | FastAPI app, CORS, router registration | ✅ (routers: `health`, `chat`) |
 | `app/core/config.py` | Settings from env/`.env`: model tiers, cost caps, `DATABASE_URL` | ✅ |
 | `app/core/guardrails.py` | `DebateGuardrails` — hard caps on personas/rounds/tokens, enforced before every LLM call | ✅ (KAN-6) |
-| `app/services/llm.py` | Guarded Anthropic wrapper: `run_turn`, model-tier routing, retry/backoff, per-turn skip, cost logging | ✅ (KAN-6) |
+| `app/services/llm.py` | Guarded Anthropic wrapper: `run_turn` (per-turn skip), `complete` (single-shot, raises), model-tier routing, retry/backoff, cost logging | ✅ (KAN-6, KAN-8) |
 | `app/services/personas.py` | `assign_personas(decision, context)` — three fixed archetypes, stance framed per decision | ✅ (KAN-5) |
 | `app/prompts/personas.py` | Archetype specs (name, color, system prompt, stance template) | ✅ (KAN-5) |
 | `app/services/orchestrator.py` | `run_debate` — sequential rounds, concurrent turns, persist-as-it-lands, skip tolerance | ✅ (KAN-7) |
-| `app/services/judge.py` | `judge(transcript)` — Opus synthesis → structured `Verdict` + repair retry | ⏳ planned (TICKET-5) |
+| `app/services/judge.py` | `judge(debate)` — Opus synthesis → schema-validated `Verdict` + one repair retry; `persist_verdict` | ✅ (KAN-8) |
 | `app/models/*.py` | ORM: `Debate`, `Persona`, `Turn`, `Verdict`, enums | ✅ (KAN-10) |
 | `app/repositories/debates.py` | CRUD for the debate aggregate (create/add_persona/add_turn/set_verdict/get/list/delete) | ✅ (KAN-10) |
 | `app/db/session.py`, `db/base.py` | Engine/session factory, `get_session()`, `init_db()` (SQLite auto-create) | ✅ (KAN-10) |
 | `app/api/routes/debates.py` | `POST/GET/DELETE /api/debates` — run orchestrator → judge, persist, return | ⏳ planned (TICKET-6) |
-| `app/schemas/*.py` | Pydantic request/response + in-memory contracts (`chat`, `persona`) | ✅ (verdict/debate schemas with T5/T6) |
+| `app/schemas/*.py` | Pydantic request/response + in-memory contracts (`chat`, `persona`, `verdict`) | ✅ (`verdict` KAN-8; `debate` schema with T6) |
 
 ### Debate engine (implemented — DEC-003, DEC-001/002, DEC-008)
 
@@ -69,6 +69,25 @@ Layered FastAPI service. The debate engine is the heart of the product.
 4. **Skip tolerance** — a failed or guardrail-blocked turn is persisted as `SKIPPED` (empty
    content) and the debate continues. Status lifecycle: `PENDING → RUNNING → COMPLETED`.
 5. Returns the `Debate` with turns in transcript order — the input the judge (TICKET-5) consumes.
+
+### Judge (implemented — DEC-007)
+
+`judge(debate)` runs **last**, on the full transcript, using the **Opus** tier:
+
+1. Renders the OK turns as `[Round N] {persona}: {content}` (skipping `SKIPPED`/empty turns) into a
+   single Opus prompt that asks for a **JSON** verdict.
+2. **Structured output via prompt + validation** (not native structured outputs, deliberately — so
+   the DEC-007 repair path is real): parse the JSON and validate it against the Pydantic
+   `schemas.verdict.Verdict` (`recommendation`, `cases: [{option, argument}]`, `tradeoffs: [str]`).
+3. **Exactly one repair retry** on a parse/schema failure (re-prompt with the bad output + error);
+   a second failure raises `JudgeSchemaError`.
+4. `judge` is pure (no HTTP/session/persistence) so the API (TICKET-6) composes
+   `run_debate → judge → persist_verdict`. `persist_verdict` upserts the single `Verdict` row via
+   the repository (linkable to its transcript by `debate_id`).
+
+The judge call goes through `LLMService.complete` — a single-shot completion that routes to the tier
+model and **raises** on persistent failure (unlike `run_turn`, which degrades to a skipped turn); it
+is intentionally outside the debate `DebateGuardrails` (those cap the persona rounds).
 
 ### Model tiers (DEC-007)
 
@@ -107,7 +126,7 @@ The live threaded debate UI (DEC-006) and streaming are **not built yet** (EPIC-
 | DEC | Decision | Realized by |
 | --- | --- | --- |
 | DEC-001 / DEC-002 | Three fixed persona archetypes, stances framed per decision | KAN-5 |
-| DEC-007 | Model routing (Sonnet personas / Opus judge / Haiku utilities) | KAN-6 |
+| DEC-007 | Model routing (Sonnet personas / Opus judge / Haiku utilities) + structured, schema-validated verdict with one repair retry | KAN-6 (routing) · KAN-8 (judge) |
 | DEC-005 / DEC-008 | Single-user local; SQLite persistence | KAN-10 |
 | DEC-003 | Fixed 2 rounds, no convergence heuristic | KAN-7 |
 | DEC-004 / DEC-006 / DEC-009 / DEC-010 | Watch-only, threaded UI, shareable-verdict deferred, design system | ⏳ frontend epics |
@@ -118,6 +137,7 @@ Newest first. One row per architecture-affecting change; keep in lockstep with t
 
 | Date | Change | Refs |
 | --- | --- | --- |
+| 2026-08-29 | Judge synthesis: Opus `judge(debate)` → schema-validated `Verdict` with exactly one repair retry, persisted via `persist_verdict`; added `LLMService.complete` (single-shot, raises) and the `verdict` schema. Marked judge/verdict ✅. | KAN-8 · DEC-007 |
 | 2026-08-29 | Establish this file as the living source of truth + Confluence mirror; refresh to reflect the implemented debate engine (orchestrator, personas, guardrails, LLM tiers, SQLite models/repositories) and mark judge/API as planned; add Implementation Status + Change Log. Reconciled the Confluence HLD/LLD's stale "open questions" against DEC-001/003/004/005 and fixed its round algorithm to DEC-003. | KAN-7, DEC-003 |
 | 2026-08-29 | Debate orchestrator: sequential 2 rounds, concurrent transcript-aware turns, persist-as-it-lands, skip tolerance. | KAN-7 · DEC-003/001/002/007/008 |
 | 2026-08-28 | Guarded LLM turn client, model tiers, cost guardrails. | KAN-6 · DEC-007 |
