@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from anthropic import APIConnectionError
+import pytest
+from anthropic import APIConnectionError, APIError
 
 from app.core.guardrails import DebateGuardrails
 from app.schemas.chat import ChatMessage
@@ -121,3 +122,26 @@ def test_successful_turn_uses_tier_model_and_records_usage():
     _, kwargs = service._client.messages.create.call_args
     assert kwargs["model"] == "claude-opus-4-8"
     assert guard.tokens_spent == 46
+
+
+def test_complete_returns_text_and_routes_to_tier_model():
+    service = make_service()
+    service._client.messages.create.return_value = make_response(text="verdict json")
+
+    text = service.complete(tier="judge", messages=MESSAGES, system="be a judge")
+
+    assert text == "verdict json"
+    _, kwargs = service._client.messages.create.call_args
+    assert kwargs["model"] == "claude-opus-4-8"  # DEC-007 judge tier
+    assert kwargs["system"] == "be a judge"
+
+
+def test_complete_raises_after_persistent_error():
+    service = make_service()
+    service._client.messages.create.side_effect = transient_error()
+
+    with pytest.raises(APIError):
+        service.complete(tier="judge", messages=MESSAGES)
+
+    # Default llm_max_retries=2 -> 3 attempts, then re-raise (does NOT skip).
+    assert service._client.messages.create.call_count == 3

@@ -170,6 +170,66 @@ class LLMService:
             reason=f"llm error after {self._max_retries + 1} attempts: {last_error}",
         )
 
+    def complete(
+        self,
+        *,
+        tier: Tier,
+        messages: list[ChatMessage],
+        system: str | None = None,
+        max_tokens: int = 2048,
+    ) -> str:
+        """Run a single guarded completion and return the raw text.
+
+        Unlike :meth:`run_turn`, this carries no debate guardrails or persona
+        plumbing and **raises** on persistent failure instead of degrading to a
+        skipped turn — the judge (TICKET-5) needs a hard error so its repair loop
+        can surface it. Transient API failures are retried with exponential backoff;
+        the last error is re-raised once retries are exhausted.
+        """
+        model = self.model_for(tier)
+        payload = [{"role": m.role, "content": m.content} for m in messages]
+
+        last_error: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            start = time.perf_counter()
+            try:
+                response = self._client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=payload,
+                    **({"system": system} if system is not None else {}),
+                )
+            except APIError as exc:
+                last_error = exc
+                logger.warning(
+                    "completion attempt failed: tier=%s attempt=%s/%s error=%s",
+                    tier,
+                    attempt + 1,
+                    self._max_retries + 1,
+                    exc,
+                )
+                if attempt < self._max_retries:
+                    self._sleep(self._backoff_base * (2**attempt))
+                    continue
+                raise
+
+            latency_ms = (time.perf_counter() - start) * 1000
+            text = "".join(block.text for block in response.content if block.type == "text")
+            usage = getattr(response, "usage", None)
+            tokens_in = getattr(usage, "input_tokens", 0) or 0
+            tokens_out = getattr(usage, "output_tokens", 0) or 0
+            logger.info(
+                "completion ok: tier=%s model=%s tokens_in=%s tokens_out=%s latency_ms=%.1f",
+                tier,
+                model,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+            )
+            return text
+
+        raise last_error  # pragma: no cover - loop either returns or raises above
+
 
 _service: LLMService | None = None
 
