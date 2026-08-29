@@ -67,6 +67,16 @@ def get_session() -> Iterator[Session]:
         session.close()
 
 
+def get_db() -> Iterator[Session]:
+    """Request-scoped session for FastAPI routes (commit on success, rollback on error).
+
+    Delegates to :func:`get_session` so commit/rollback/close behavior stays
+    single-sourced. FastAPI runs this sync generator dependency in a threadpool.
+    """
+    with get_session() as session:
+        yield session
+
+
 def init_db() -> None:
     """Create all tables (dev auto-create — DEC-008). Idempotent."""
     import app.models  # noqa: F401 — register every table on Base.metadata
