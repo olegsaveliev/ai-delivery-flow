@@ -75,6 +75,17 @@ For each changed file or new file, analyze for:
    - Logging standards
    - Testing standards
 
+6. **Architecture-Doc & Decision Drift**
+   - Read `docs/architecture.md` and compare it against the changed code. Flag where the change
+     makes the doc **stale** (new/renamed/removed modules, changed data model, altered algorithm
+     or component responsibilities) or **contradicts** it.
+   - Check the change against the Decision Log: does it **contradict an Accepted `DEC-xxx`**, or
+     **introduce/realize a decision** that the doc doesn't yet reflect?
+   - Report needed doc updates as a `low`/`medium` finding with `file: docs/architecture.md`
+     (and note the Confluence mirror, page `917506`, must be updated in lockstep). The actual
+     doc + Confluence update is applied at **commit** time — see the `commit` skill. If the doc
+     is already accurate, say so explicitly.
+
 ## Verify Issues Are Real
 
 - Run specific tests for issues found

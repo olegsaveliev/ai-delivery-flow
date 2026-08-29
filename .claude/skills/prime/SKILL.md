@@ -46,7 +46,15 @@ On Linux, run: `tree -L 3 -I 'node_modules|__pycache__|.git|dist|build'`
 
 - Read CLAUDE.md or similar global rules file
 - Read README files at project root and major directories
-- Read any architecture documentation
+- **Read `docs/architecture.md` as standing design context** (a living HLD/LLD, treated like a
+  PRD for how the system is built — not just background). It is the local source of truth and is
+  mirrored to Confluence (page `917506`). Note its **Change Log** and which components it marks
+  implemented vs. planned, so planning is anchored to the intended design.
+  - As you read the code in Steps 1 & 3, **watch for drift**: places where `architecture.md`
+    describes something that no longer matches the code (stale module paths, superseded
+    algorithms, resolved "open questions", a decision it contradicts). Collect these — you'll
+    surface them in the report. Do **not** edit the doc here; priming is read-only. Fixing drift
+    happens in `/code-review` and `/commit`.
 
 ### 3. Identify Key Files
 
@@ -81,6 +89,9 @@ Provide a concise summary covering:
 - Overall structure and organization
 - Key architectural patterns identified
 - Important directories and their purposes
+- **Architecture-doc drift:** anything in `docs/architecture.md` that no longer matches the code
+  or contradicts an Accepted `DEC-xxx` (or "none found"). Flag it so it can be fixed at
+  code-review / commit time — do not fix it during priming.
 
 ### Tech Stack
 - Languages and versions
