@@ -31,6 +31,9 @@ verdict; everything is persisted locally.
 ```
 
 The debate engine (EPIC-A) is headless: no streaming and no live UI yet — those are EPIC-B/C.
+EPIC-B has started: the stream **event contract** and SSE wire encoding exist (KAN-17), but nothing
+emits or serves them yet (orchestrator emission is KAN-19; the `/stream` endpoint is B-T4, gated on
+Proposed DEC-012).
 
 ## Backend
 
@@ -50,7 +53,9 @@ Layered FastAPI service. The debate engine is the heart of the product.
 | `app/repositories/debates.py` | CRUD for the debate aggregate (create/add_persona/add_turn/set_verdict/get/list/delete) | ✅ (KAN-10) |
 | `app/db/session.py`, `db/base.py` | Engine/session factory, `get_session()`, `init_db()` (SQLite auto-create) | ✅ (KAN-10) |
 | `app/api/routes/debates.py` | `POST/GET/DELETE /api/debates` — run orchestrator → judge, persist, return; 404 on missing id | ✅ (KAN-9) |
-| `app/schemas/*.py` | Pydantic request/response + in-memory contracts (`chat`, `persona`, `verdict`, `debate`) | ✅ (`debate` KAN-9) |
+| `app/schemas/*.py` | Pydantic request/response + in-memory contracts (`chat`, `persona`, `verdict`, `debate`, `events`) | ✅ (`debate` KAN-9, `events` KAN-17) |
+| `app/schemas/events.py` | Stream event contract: 8 frozen event models discriminated by `type`, `DebateEvent` union + `parse_event`, `SequencedEvent{seq, event}` envelope | ✅ (KAN-17) |
+| `app/services/events.py` | SSE wire encoding: `EventSequencer` (per-debate seq from 1), `encode_sse`, `EventSink` protocol, `InMemoryEventSink` | ✅ (KAN-17) |
 
 ### Debate engine (implemented — DEC-003, DEC-001/002, DEC-008)
 
@@ -107,6 +112,33 @@ auth / no ownership scoping (DEC-005). Routes use a request-scoped `get_db` depe
 (`db/session.py`); because `set_verdict` writes by `debate_id` without touching the in-session
 `Debate.verdict` relationship, `POST` calls `session.expire_all()` before its final reload.
 
+### Stream event contract (implemented — DEC-003, DEC-004; KAN-17)
+
+The frozen server → client contract for live streaming (EPIC-B). Watch-only (DEC-004): there are no
+inbound event types. Defined in `app/schemas/events.py`, encoded by `app/services/events.py`, mirrored
+in `frontend/src/types/debateEvents.ts`.
+
+| Event | Payload (besides `type`) | Meaning |
+| --- | --- | --- |
+| `personas_assigned` | `debate_id`, `personas: PersonaOut[]` | The 3 personas are persisted (same shape as `GET /api/debates/{id}`; UI color is derived from `archetype`) |
+| `turn_started` | `round`, `persona_id` | A persona turn begins |
+| `turn_delta` | `round`, `persona_id`, `text` | One streamed text chunk |
+| `turn_completed` | `round`, `persona_id`, `turn_id`, `status: ok\|skipped`, `content` | Turn persisted (DEC-008). `content` is authoritative and **replaces** the accumulated deltas; a skipped turn has `content: ""` and partial text is discarded |
+| `round_completed` | `round` | All turns of a round landed — twice per debate (DEC-003) |
+| `verdict` | `recommendation`, `cases`, `tradeoffs` | The judge verdict, one non-streamed event (DEC-007) |
+| `done` | `debate_id`, `status: completed` | Terminal: success |
+| `error` | `code`, `message` | Terminal: failure (`code` is open; known codes are provisional pending DEC-012) |
+
+- **Wire frame:** `id: <seq>\nevent: <type>\ndata: <single-line JSON>\n\n` (LF only; the JSON includes
+  `type`, excludes `seq`).
+- **Sequencing:** events never carry `seq`. Producers emit bare events to an `EventSink`; the sink that owns
+  the debate's stream stamps them with a per-debate `EventSequencer` (1, 2, 3, …) into `SequencedEvent`s.
+  The sequencer is event-loop-only (not thread-safe).
+- **Strictness:** event models are top-level `frozen` + `extra="forbid"`; `parse_event` rejects unknown or
+  missing `type`.
+- Not yet wired: orchestrator emission (KAN-19) and the broker / `GET /api/debates/{id}/stream` endpoint
+  (B-T4, gated on Proposed DEC-012).
+
 ### Model tiers (DEC-007)
 
 Personas = `claude-sonnet-5`; judge = `claude-opus-4-8`; cheap utilities = `claude-haiku-4-5-20251001`.
@@ -127,7 +159,8 @@ round N reads rounds `< N`. FK cascade deletes children with a debate.
 ## Frontend
 
 - `src/api/client.ts` — typed fetch client for the backend
-- `src/types/` — shared TypeScript types (mirror `backend/app/schemas`)
+- `src/types/` — shared TypeScript types (mirror `backend/app/schemas`); `debateEvents.ts` mirrors the
+  stream event contract (KAN-17)
 - `src/components/`, `src/pages/`, `src/hooks/` — UI building blocks (design owned by EPIC-E, DEC-010)
 
 The live threaded debate UI (DEC-006) and streaming are **not built yet** (EPIC-B/C). Today
@@ -156,6 +189,7 @@ empty `.gitkeep` placeholders; there is no UI.
 | DEC-005 / DEC-008 | Single-user local; SQLite persistence | KAN-10 |
 | DEC-003 | Fixed 2 rounds, no convergence heuristic | KAN-7 |
 | DEC-004 / DEC-005 / DEC-008 | Debate HTTP API — watch-only surface (create/read/list/delete), no auth, SQLite-persisted | KAN-9 |
+| DEC-003 / DEC-004 | Stream event contract — server → client only, `round_completed` per round (contract only; not yet emitted/served) | KAN-17 |
 | DEC-006 / DEC-009 / DEC-010 | Threaded UI, shareable-verdict deferred, design system | ⏳ frontend epics |
 
 ## Change Log
@@ -164,6 +198,7 @@ Newest first. One row per architecture-affecting change; keep in lockstep with t
 
 | Date | Change | Refs |
 | --- | --- | --- |
+| 2026-09-24 | Stream event contract (EPIC-B B-T1): 8 frozen event models + `DebateEvent` union + `parse_event` (`schemas/events.py`), SSE encoding with per-debate `EventSequencer`, `EventSink` protocol and in-memory sink (`services/events.py`), TS mirror `frontend/src/types/debateEvents.ts`. Not yet emitted or served. | KAN-17 · DEC-003/004 |
 | 2026-08-29 | Documented the **frontend gate** (design-before-frontend): EPIC-C waits on EPIC-E; recorded that `frontend/` is a bare scaffold with no UI. No code change — spec/doc alignment after slicing KAN-11 into KAN-12…16. | KAN-11 · DEC-010 |
 | 2026-08-29 | Debate HTTP API: `/api/debates` router (POST create-and-run → orchestrator → judge → persist; GET one/list; DELETE) + `debate` request/response schemas + request-scoped `get_db`. Watch-only, no auth. Marked API ✅. | KAN-9 · DEC-004/005/008 |
 | 2026-08-29 | Judge synthesis: Opus `judge(debate)` → schema-validated `Verdict` with exactly one repair retry, persisted via `persist_verdict`; added `LLMService.complete` (single-shot, raises) and the `verdict` schema. Marked judge/verdict ✅. | KAN-8 · DEC-007 |
