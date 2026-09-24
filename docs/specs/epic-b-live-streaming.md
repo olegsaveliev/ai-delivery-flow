@@ -44,7 +44,7 @@ Exactly one terminal event (`done` **or** `error`) ends every stream. The PRD §
 - Likely files/components: `backend/app/schemas/events.py`, `backend/app/services/events.py` (sink + encoder), `backend/tests/test_events.py`, `frontend/src/types/debateEvents.ts`
 - Decisions: DEC-003 (two `round_completed` events), DEC-004 (server → client only; no inbound event types)
 - Depends on: none
-- Jira issue: [KAN-17](https://osavelyev.atlassian.net/browse/KAN-17) (new)
+- Jira issue: [KAN-17](https://osavelyev.atlassian.net/browse/KAN-17) — Done (PR #12, `8399df3`)
 
 ### B-T2 — Streaming persona turns in the LLM client
 - Outcome and scope: _As a viewer, I want each persona's words to arrive as they are generated, so that the debate feels alive rather than appearing in blocks._ Add `LLMService.stream_turn(..., on_delta)` using the Anthropic streaming Messages API on the persona tier. It keeps `run_turn`'s guarantees: guardrails checked before the call, retry with backoff, cost/latency logged, never raises (it degrades to a `skipped` `TurnResult`). It also adds a **per-turn timeout** (config) that yields `skipped`.
@@ -58,7 +58,7 @@ Exactly one terminal event (`done` **or** `error`) ends every stream. The PRD §
 - Likely files/components: `backend/app/services/llm.py`, `backend/app/core/config.py`, `backend/tests/test_llm.py`
 - Decisions: DEC-007 (persona tier = Sonnet), PRD §8 cost guardrails
 - Depends on: none
-- Jira issue: [KAN-18](https://osavelyev.atlassian.net/browse/KAN-18) (new)
+- Jira issue: [KAN-18](https://osavelyev.atlassian.net/browse/KAN-18) — Done (PR #13, `dc7e91b`)
 
 ### B-T3 — Orchestrator emits debate events
 - Outcome and scope: _As a viewer, I want the debate engine to announce each step (personas, turn start, tokens, turn end, round end) as it happens, so that a stream can show the debate live._ `run_debate` gains an optional `sink: EventSink`. When one is given, it uses `stream_turn` and emits `personas_assigned`, `turn_started`, `turn_delta`, `turn_completed`, and `round_completed`. Deltas from worker threads are bridged onto the event loop thread-safely (`loop.call_soon_threadsafe` / `asyncio.Queue`). All DB writes stay on the orchestrator thread (unchanged). Without a sink, behavior and output match today's.
@@ -91,8 +91,9 @@ Exactly one terminal event (`done` **or** `error`) ends every stream. The PRD §
 - Jira issue: blocked (not filed — scope depends on DEC-012)
 
 ### B-T5 — Graceful close: per-debate timeout, keepalive, disconnects — **BLOCKED on DEC-012**
-- Outcome and scope: _As a viewer, I want the stream to always end cleanly, even if something hangs or I close the tab, so that the client never waits forever and a run never leaks._ Add a per-debate wall-clock timeout, periodic SSE keepalive comments, client-disconnect handling, and a guaranteed terminal event on any unexpected exception. Per-turn timeouts are in B-T2.
+- Outcome and scope: _As a viewer, I want the stream to always end cleanly, even if something hangs or I close the tab, so that the client never waits forever and a run never leaks._ Add a per-debate wall-clock timeout, periodic SSE keepalive comments, client-disconnect handling, and a guaranteed terminal event on any unexpected exception. Per-turn timeouts are in B-T2 — but as built (KAN-18) that bound is **soft**: a stream that sends only keepalive pings keeps resetting the read timeout and can exceed `turn_timeout_seconds`, so B-T5's per-debate timeout is the **outer bound** for it.
 - Acceptance criteria:
+  - [ ] The per-debate timeout also bounds a persona turn stuck on a ping-only stream (KAN-18's per-turn budget cannot). Note `asyncio.to_thread` cannot kill the worker thread, so plan how the stuck stream is abandoned or closed and how its turn is recorded.
   - [ ] Per-debate timeout (config, e.g. `debate_timeout_seconds`) → run cancelled, debate status `FAILED`, subscribers get `error{code: "timeout"}`; completed turns stay persisted.
   - [ ] Any unhandled exception in the run pipeline → `error{code: "internal"}` terminal event, status `FAILED` (try/finally guarantees exactly one terminal event).
   - [ ] Keepalive `: ping` comment every N seconds (config) while a stream is idle.
@@ -133,7 +134,7 @@ Integration notes: B-T3, B-T4, and B-T5 all touch the run path (`orchestrator.py
 ## Gaps and assumptions
 - **Run lifecycle is undecided → Proposed DEC-012.** The PRD API table has `POST` → `debate_id` and a separate `GET /{id}/stream`. The shipped KAN-9 `POST` runs the debate synchronously. Picking the model (background run with broker/replay vs run-on-connect vs POST-returns-stream) is an architectural decision, and none of the Accepted DECs cover it. B-T4 and B-T5 stay blocked until it's decided.
 - **Event set: PRD vs epic.** PRD §6 lists `personas_assigned, turn_delta, round_completed, verdict, done, error`. The KAN-2 epic adds `turn_started` and `turn_completed`. They don't conflict — the epic adds events without changing the PRD's — so B-T1 includes all 8. `turn_completed` gives the client the authoritative persisted content even if it missed deltas. Confirm, or drop them to match the PRD strictly.
-- **Mid-stream failure policy (assumption, B-T2):** retry only before the first delta; a failure after partial text becomes a `skipped` turn. This avoids showing duplicated text. The PRD only says "per-turn retry/backoff; skip on repeated failure".
+- **Mid-stream failure policy (built in KAN-18):** retry only transient failures and only before the first delta; a failure after partial text becomes a `skipped` turn, so no client sees duplicated text. The per-turn budget is soft for ping-only streams — see B-T5.
 - **Judge is not token-streamed.** DEC-007 needs a schema-validated JSON verdict with repair, so the verdict arrives as one `verdict` event. Streaming the judge is out of scope.
 - **PRD status** on Confluence still reads *Draft — awaiting approval*. EPIC-A was already sliced and shipped from this same PRD, so the scope is treated as stable. Flag it if that's wrong.
 - Frontend consumption of the stream (EventSource hook, UI) is EPIC-C and out of scope. Only the TS event types are mirrored here (B-T1).
@@ -141,7 +142,7 @@ Integration notes: B-T3, B-T4, and B-T5 all touch the run path (`orchestrator.py
 
 ## Publication status
 - Confluence: published as page 9535489 (child of PRD 1048577), v1, 2026-09-24 — https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/9535489
-- Jira: created KAN-17 (B-T1), KAN-18 (B-T2), KAN-19 (B-T3) as Stories under KAN-2; `Blocks` links KAN-17→KAN-19, KAN-18→KAN-19. **Pending:** file B-T4 and B-T5 once DEC-012 is Accepted (rerun `/spec 1048577 KAN-2`), then link KAN-17/KAN-19 → B-T4, B-T4/KAN-18 → B-T5.
+- Jira: created KAN-17 (B-T1), KAN-18 (B-T2), KAN-19 (B-T3) as Stories under KAN-2 (KAN-17 and KAN-18 Done 2026-09-24, PRs #12/#13); `Blocks` links KAN-17→KAN-19, KAN-18→KAN-19. **Pending:** file B-T4 and B-T5 once DEC-012 is Accepted (rerun `/spec 1048577 KAN-2`), then link KAN-17/KAN-19 → B-T4, B-T4/KAN-18 → B-T5.
 - Decision Log: DEC-012 added as **Proposed** (page 1015810, v11, 2026-09-24), including the Implementation Tracker row. Awaiting approval.
 
 ## Definition of Done (per ticket)
