@@ -1,6 +1,6 @@
 ---
 name: end-to-end-feature
-description: Autonomously develops a complete feature from priming through planning, execution, and commit by chaining the four core PIV-loop skills. Use when you want a full hands-off feature build from a single description.
+description: Autonomously develops a complete feature from pickup through planning, execution, and commit by chaining the four core PIV-loop skills. Use when you want a full hands-off feature build from a single description.
 argument-hint: [feature-description]
 ---
 
@@ -12,11 +12,11 @@ This skill chains the 4 core PIV-loop skills for autonomous feature development.
 
 ---
 
-## Step 1: Prime - Load Codebase Context
+## Step 1: Pickup - Load Codebase Context
 
-Execute the priming workflow to understand the codebase.
+Execute the pickup workflow to understand the codebase.
 
-Run the `prime` skill (`.claude/skills/prime/SKILL.md`).
+Run the `pickup` skill (`.claude/skills/pickup/SKILL.md`).
 
 ---
 
@@ -59,7 +59,7 @@ After completing all 4 steps, provide:
 **Feature Name**: [feature-name from planning step]
 
 **Steps Executed:**
-1. ✅ Prime - Codebase context loaded
+1. ✅ Pickup - Codebase context loaded
 2. ✅ Planning - Plan created at `.claude/plans/[feature-name].md`
 3. ✅ Execute - Feature implemented and validated
 4. ✅ Commit - Changes committed to git

@@ -85,4 +85,4 @@ The rules are the team's implicit knowledge made explicit.
 ## Notes
 - For a codebase that already has an AI Layer, you **evolve** it for the new epic
   (Type B: update CLAUDE.md, add epic-specific context) rather than deriving from scratch.
-- Pair with `prime` (which can pull the ticket/spec) so the rules are anchored to the work.
+- Pair with `pickup` (which can pull the ticket/spec) so the rules are anchored to the work.

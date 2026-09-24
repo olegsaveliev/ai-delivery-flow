@@ -14,7 +14,7 @@ The bridge between a strategic doc and the PIV loop. The epic doc is the destina
 The PM works with the agent to write or refine the PRD: goals, user stories, acceptance criteria, out-of-scope. At the end of the session, upload (or paste) the finished PRD into Confluence and note its page id. Keeping this separate from slicing avoids a bloated context window and lets the PRD stabilize before it is decomposed.
 
 **Session 2 — Run `/spec`.**
-With a primed session and the stable Confluence page id (or local file path) in hand, run `/spec` to decompose the PRD into tickets. The PRD is the source of truth; the agent does not re-draft it here.
+After `/pickup`, with the stable Confluence page id (or local file path) in hand, run `/spec` to decompose the PRD into tickets. The PRD is the source of truth; the agent does not re-draft it here.
 
 > **Why two sessions?** PRD drafting and ticket decomposition are cognitively different tasks. Mixing them in one long session inflates the context window, often causes the agent to start slicing before requirements are settled, and makes it harder to review the PRD independently. The boundary also mirrors a real PM workflow.
 
@@ -24,7 +24,7 @@ With a primed session and the stable Confluence page id (or local file path) in 
   - Detection: if `$1` is all digits → treat as a Confluence page id and fetch it via MCP.
   - Otherwise → treat as a local file path and read it directly.
 - `$2` *(optional)* — a **Jira epic key** (e.g. `PROJ-42`) to cross-reference. If provided, fetch the epic and include its summary, description, and child issues as additional context alongside the PRD.
-- A primed session — `/prime` should already have loaded the relevant codebase surface.
+- A session started with `/pickup` — it should already have loaded the relevant codebase surface.
 
 ## Process
 
@@ -138,7 +138,7 @@ If `$2` was **not** provided, skip this step and tell the user which epic key to
 2. A Confluence child page under the PRD (when the input was a Confluence page id).
 3. Real Jira issues under the epic, when an epic key was passed (Step 6). Existing children are never duplicated.
 
-Each ticket then enters its own PIV loop starting at `/prime` → `/plan-feature`.
+Each ticket then enters its own PIV loop starting at `/pickup` → `/plan-feature`.
 
 ## Notes
 

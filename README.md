@@ -90,7 +90,7 @@ one-time OAuth login.
    stories under the epic.
 
 **Build phase, per story (the PIV loop)**
-7. `/prime KAN-xx` → `/plan-feature …` → `/execute <plan>` → `/validate` → `/code-review` → `/commit`
+7. `/pickup KAN-xx` → `/plan-feature …` → `/execute <plan>` → `/validate` → `/code-review` → `/commit`
 
 ### Skills reference
 
@@ -98,7 +98,7 @@ one-time OAuth login.
 |---|---|---|
 | **create-prd** | Turns the discussed requirements into a PRD | `/create-prd [output-filename]` |
 | **spec** | Slices an epic or PRD into stories with a dependency graph, writes them to `docs/specs/`, publishes to Confluence, and creates the Jira stories under the epic | `/spec <confluence-id or doc-path> [KAN-epic]` |
-| **prime** | Run at task start. Loads story → epic → PRD → Decision Log and the architecture doc, and states which DECs apply | `/prime KAN-12 [confluence-ids]` |
+| **pickup** | Run at task start. Loads story → epic → PRD → Decision Log and the architecture doc, and states which DECs apply | `/pickup KAN-12 [confluence-ids]` |
 | **plan-feature** | Deep codebase analysis → one-pass implementation plan that cites the DECs it honors | `/plan-feature <feature description>` |
 | **execute** | Implements a plan task by task, validating each step | `/execute <path-to-plan>` |
 | **design-sync** | Syncs one UI component between Claude Design and `frontend/src/components` (DEC-010) | `/design-sync <Component> --pull\|--push` |
