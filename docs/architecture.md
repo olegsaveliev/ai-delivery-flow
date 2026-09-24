@@ -42,9 +42,9 @@ Layered FastAPI service. The debate engine is the heart of the product.
 | Path | Responsibility | Status |
 | --- | --- | --- |
 | `app/main.py` | FastAPI app, CORS, router registration | ✅ (routers: `health`, `chat`, `debates`) |
-| `app/core/config.py` | Settings from env/`.env`: model tiers, cost caps, `DATABASE_URL` | ✅ |
+| `app/core/config.py` | Settings from env/`.env`: model tiers, cost caps, `DATABASE_URL`, retry/backoff, `turn_timeout_seconds` (per-turn streaming budget, > 0) | ✅ (timeout KAN-18) |
 | `app/core/guardrails.py` | `DebateGuardrails` — hard caps on personas/rounds/tokens, enforced before every LLM call | ✅ (KAN-6) |
-| `app/services/llm.py` | Guarded Anthropic wrapper: `run_turn` (per-turn skip), `complete` (single-shot, raises), model-tier routing, retry/backoff, cost logging | ✅ (KAN-6, KAN-8) |
+| `app/services/llm.py` | Guarded Anthropic wrapper: `run_turn` (per-turn skip), `stream_turn` (streamed persona turn → `on_delta`, per-turn budget, never raises), `complete` (single-shot, raises), model-tier routing, retry/backoff, cost logging | ✅ (KAN-6, KAN-8, `stream_turn` KAN-18) |
 | `app/services/personas.py` | `assign_personas(decision, context)` — three fixed archetypes, stance framed per decision | ✅ (KAN-5) |
 | `app/prompts/personas.py` | Archetype specs (name, color, system prompt, stance template) | ✅ (KAN-5) |
 | `app/services/orchestrator.py` | `run_debate` — sequential rounds, concurrent turns, persist-as-it-lands, skip tolerance | ✅ (KAN-7) |
@@ -139,6 +139,26 @@ in `frontend/src/types/debateEvents.ts`.
 - Not yet wired: orchestrator emission (KAN-19) and the broker / `GET /api/debates/{id}/stream` endpoint
   (B-T4, gated on Proposed DEC-012).
 
+### Streaming persona turns (implemented — DEC-007; KAN-18)
+
+`LLMService.stream_turn(..., on_delta)` is the streaming sibling of `run_turn` on the persona tier. It is
+synchronous and meant to run in a worker thread; `on_delta(text)` is a plain sync callback, called once per
+non-empty text delta in order, on that thread (KAN-19 will bridge it onto the event loop). Nothing calls it
+yet — the orchestrator still uses `run_turn` until KAN-19.
+
+- **Same guarantees as `run_turn`:** guardrails checked before the call, cost/latency logged, usage recorded,
+  never raises (degrades to a `skipped` `TurnResult`, `text == ""` even if deltas were already emitted).
+- **Single retry layer:** the stream uses a client with SDK retries disabled (`with_options(max_retries=0)`,
+  same connection pool); our loop retries only *transient* failures (connection/connect-timeout, 408/409/429/5xx,
+  overloaded/api error events, transport errors; `x-should-retry` honored, `retry-after` not) and only
+  **before the first delta**. A failure after a delta skips without retrying so no client sees duplicated text.
+- **Per-turn budget:** `turn_timeout_seconds` (default 60) is one wall-clock budget across attempts and backoff,
+  enforced via each attempt's request timeout (remaining budget; connect ≤ 5 s) and at every text delta; a spent
+  budget yields `reason == "timeout"`. **Soft bound:** a stream that sends only keepalive pings keeps resetting
+  the read timeout and can exceed the budget — the per-debate timeout (EPIC-B B-T5) is the outer bound.
+- **Usage on aborted/retried attempts:** charged best-effort from the stream snapshot (input exact once
+  `message_start` arrived; output may be under-counted).
+
 ### Model tiers (DEC-007)
 
 Personas = `claude-sonnet-5`; judge = `claude-opus-4-8`; cheap utilities = `claude-haiku-4-5-20251001`.
@@ -198,6 +218,7 @@ Newest first. One row per architecture-affecting change; keep in lockstep with t
 
 | Date | Change | Refs |
 | --- | --- | --- |
+| 2026-09-24 | Streaming persona turns (EPIC-B B-T2): `LLMService.stream_turn(..., on_delta)` on the persona tier — guardrails first, single retry layer (SDK retries off) for transient pre-first-delta failures only, one wall-clock `turn_timeout_seconds` budget (soft for ping-only streams; B-T5 bounds it), best-effort usage on aborted attempts, never raises. `turn_timeout_seconds` config; `anthropic>=1.2` pin. Not yet called (KAN-19). | KAN-18 · DEC-007 |
 | 2026-09-24 | Stream event contract (EPIC-B B-T1): 8 frozen event models + `DebateEvent` union + `parse_event` (`schemas/events.py`), SSE encoding with per-debate `EventSequencer`, `EventSink` protocol and in-memory sink (`services/events.py`), TS mirror `frontend/src/types/debateEvents.ts`. Not yet emitted or served. | KAN-17 · DEC-003/004 |
 | 2026-08-29 | Documented the **frontend gate** (design-before-frontend): EPIC-C waits on EPIC-E; recorded that `frontend/` is a bare scaffold with no UI. No code change — spec/doc alignment after slicing KAN-11 into KAN-12…16. | KAN-11 · DEC-010 |
 | 2026-08-29 | Debate HTTP API: `/api/debates` router (POST create-and-run → orchestrator → judge → persist; GET one/list; DELETE) + `debate` request/response schemas + request-scoped `get_db`. Watch-only, no auth. Marked API ✅. | KAN-9 · DEC-004/005/008 |

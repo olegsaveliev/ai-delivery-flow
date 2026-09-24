@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
     "pydantic-settings>=2.5",
-    "anthropic>=0.40",
+    "anthropic>=1.2",
     "python-dotenv>=1.0",
     "SQLAlchemy>=2.0",
 ]
