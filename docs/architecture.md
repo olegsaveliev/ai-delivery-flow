@@ -10,7 +10,7 @@
 > **Maintenance rule:** any change that alters the architecture here **or** realizes/changes a
 > `DEC-xxx` must (1) update this file, (2) push the same update to the Confluence mirror, and
 > (3) add a dated row to the [Change Log](#change-log). This is enforced by `/code-review`
-> (flags drift) and `/commit` (updates both + the Change Log). See `.claude/skills/{prime,code-review,commit}`.
+> (flags drift) and `/commit` (updates both + the Change Log). See `.claude/skills/{pickup,code-review,commit}`.
 
 ## Overview
 

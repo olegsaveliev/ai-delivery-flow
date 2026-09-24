@@ -11,8 +11,8 @@ These rules OVERRIDE default behavior and apply to **every** task.
 - How-we-use-ADRs process page: see the "Second Opinion" Confluence folder.
 - Decisions are identified as `DEC-001`, `DEC-002`, … Never reuse an id.
 
-**At task start (prime):**
-- Load the story → its epic → the PRD → the Decision Log (prime pulls linked Confluence).
+**At task start (pickup):**
+- Load the story → its epic → the PRD → the Decision Log (pickup pulls linked Confluence).
 - State **which DECs constrain this task** before planning. If you can't tell, stop and ask.
 
 **When planning (plan-feature):**
@@ -43,10 +43,10 @@ git config core.hooksPath .githooks
 
 ## Traceability chain
 `Story (Jira) → Epic (Jira) → PRD (Confluence) → Decision Log (DEC-xxx) → Architecture (docs/architecture.md ⇄ Confluence 917506) → Design docs`.
-Keep every new artifact linked up this chain so `prime` can load the full context from a ticket.
+Keep every new artifact linked up this chain so `pickup` can load the full context from a ticket.
 
 **Architecture doc is living context (DEC-011).** `docs/architecture.md` is the local **source of
 truth** for how the system is built, mirrored to the Confluence HLD/LLD (page `917506`). It is read
-as design context by `prime` (which also flags drift), drift-checked by `code-review`, and updated
+as design context by `pickup` (which also flags drift), drift-checked by `code-review`, and updated
 — together with the Confluence mirror and its **Change Log** — by `commit` whenever a change alters
 the architecture or realizes/changes a `DEC-xxx`.

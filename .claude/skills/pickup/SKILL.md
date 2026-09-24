@@ -1,10 +1,10 @@
 ---
-name: prime
-description: Primes the agent with deep codebase understanding by analyzing structure, documentation, and key files. Use when starting work on a codebase, at the beginning of a session, or when you need a fast orientation before planning or implementing. Optionally pulls external task context from Jira issues and Confluence pages first.
+name: pickup
+description: Loads the agent with deep codebase understanding by analyzing structure, documentation, and key files. Use when starting work on a codebase, at the beginning of a session, or when you need a fast orientation before planning or implementing. Optionally pulls external task context from Jira issues and Confluence pages first.
 argument-hint: [jira-issue-keys] [confluence-page-ids]
 ---
 
-# Prime: Load Project Context
+# Pickup: Load Project Context
 
 ## Objective
 
@@ -32,7 +32,7 @@ Build comprehensive understanding of the codebase by analyzing structure, docume
 
 **If no arguments are provided:** Skip this step entirely and proceed to Step 1.
 
-Briefly summarize any external context loaded before continuing — this frames the rest of the priming.
+Briefly summarize any external context loaded before continuing — this frames the rest of the pickup.
 
 ### 1. Analyze Project Structure
 
@@ -53,7 +53,7 @@ On Linux, run: `tree -L 3 -I 'node_modules|__pycache__|.git|dist|build'`
   - As you read the code in Steps 1 & 3, **watch for drift**: places where `architecture.md`
     describes something that no longer matches the code (stale module paths, superseded
     algorithms, resolved "open questions", a decision it contradicts). Collect these — you'll
-    surface them in the report. Do **not** edit the doc here; priming is read-only. Fixing drift
+    surface them in the report. Do **not** edit the doc here; pickup is read-only. Fixing drift
     happens in `/code-review` and `/commit`.
 
 ### 3. Identify Key Files
@@ -91,7 +91,7 @@ Provide a concise summary covering:
 - Important directories and their purposes
 - **Architecture-doc drift:** anything in `docs/architecture.md` that no longer matches the code
   or contradicts an Accepted `DEC-xxx` (or "none found"). Flag it so it can be fixed at
-  code-review / commit time — do not fix it during priming.
+  code-review / commit time — do not fix it during pickup.
 
 ### Tech Stack
 - Languages and versions
