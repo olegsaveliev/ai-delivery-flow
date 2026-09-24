@@ -32,8 +32,9 @@ verdict; everything is persisted locally.
 
 The debate engine (EPIC-A) is headless: no streaming and no live UI yet — those are EPIC-B/C.
 EPIC-B has started: the stream **event contract** and SSE wire encoding exist (KAN-17), but nothing
-emits or serves them yet (orchestrator emission is KAN-19; the `/stream` endpoint is B-T4, gated on
-Proposed DEC-012).
+emits or serves them yet (orchestrator emission is KAN-19; the run lifecycle and `/stream` endpoint are
+B-T4/B-T6, designed by DEC-012 — Accepted 2026-09-24). `LLMService.stream_turn` exists (KAN-18) but is not
+yet called.
 
 ## Backend
 
@@ -127,7 +128,7 @@ in `frontend/src/types/debateEvents.ts`.
 | `round_completed` | `round` | All turns of a round landed — twice per debate (DEC-003) |
 | `verdict` | `recommendation`, `cases`, `tradeoffs` | The judge verdict, one non-streamed event (DEC-007) |
 | `done` | `debate_id`, `status: completed` | Terminal: success |
-| `error` | `code`, `message` | Terminal: failure (`code` is open; known codes are provisional pending DEC-012) |
+| `error` | `code`, `message` | Terminal: failure (`code` is open; DEC-012 fixes the codes as `judge_failed`, `timeout`, `internal`, `interrupted`) |
 
 - **Wire frame:** `id: <seq>\nevent: <type>\ndata: <single-line JSON>\n\n` (LF only; the JSON includes
   `type`, excludes `seq`).
@@ -137,7 +138,7 @@ in `frontend/src/types/debateEvents.ts`.
 - **Strictness:** event models are top-level `frozen` + `extra="forbid"`; `parse_event` rejects unknown or
   missing `type`.
 - Not yet wired: orchestrator emission (KAN-19) and the broker / `GET /api/debates/{id}/stream` endpoint
-  (B-T4, gated on Proposed DEC-012).
+  (B-T4/B-T6, per DEC-012 — Accepted: background run + in-process broker with in-memory replay).
 
 ### Streaming persona turns (implemented — DEC-007; KAN-18)
 
@@ -218,6 +219,7 @@ Newest first. One row per architecture-affecting change; keep in lockstep with t
 
 | Date | Change | Refs |
 | --- | --- | --- |
+| 2026-09-24 | DEC-012 Accepted (no code change): streaming run lifecycle = background run in a lifespan task registry + per-debate in-process broker with an in-memory event log for replay (SQLite-synthesized replay after the run), restart sweep, abandon-on-timeout with `max_active_debates` cap, `POST` → 202. Updated the not-yet-wired notes and error codes to match. Implemented by B-T4/B-T6/B-T5 (KAN-20/21/22). | DEC-012 |
 | 2026-09-24 | Streaming persona turns (EPIC-B B-T2): `LLMService.stream_turn(..., on_delta)` on the persona tier — guardrails first, single retry layer (SDK retries off) for transient pre-first-delta failures only, one wall-clock `turn_timeout_seconds` budget (soft for ping-only streams; B-T5 bounds it), best-effort usage on aborted attempts, never raises. `turn_timeout_seconds` config; `anthropic>=1.2` pin. Not yet called (KAN-19). | KAN-18 · DEC-007 |
 | 2026-09-24 | Stream event contract (EPIC-B B-T1): 8 frozen event models + `DebateEvent` union + `parse_event` (`schemas/events.py`), SSE encoding with per-debate `EventSequencer`, `EventSink` protocol and in-memory sink (`services/events.py`), TS mirror `frontend/src/types/debateEvents.ts`. Not yet emitted or served. | KAN-17 · DEC-003/004 |
 | 2026-08-29 | Documented the **frontend gate** (design-before-frontend): EPIC-C waits on EPIC-E; recorded that `frontend/` is a bare scaffold with no UI. No code change — spec/doc alignment after slicing KAN-11 into KAN-12…16. | KAN-11 · DEC-010 |
