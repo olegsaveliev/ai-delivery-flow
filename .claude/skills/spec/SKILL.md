@@ -1,146 +1,193 @@
 ---
 name: spec
-description: Slice an epic or next-epic doc into PIV-sized tickets with a dependency graph. Turns a large strategic doc into the discrete units of work that the PIV loop consumes. Accepts a Confluence page id OR a local PRD/epic doc path; optionally cross-references a Jira epic key. Writes the breakdown to docs/specs/ and, when the input was a Confluence page, publishes it back as a child page of the PRD. When a Jira epic key is passed, it also creates the tickets as issues under that epic, skipping any that already exist.
+description: Slice a stable PRD or epic doc into PIV-sized, testable tickets with dependencies and execution order. Accepts a Confluence page id OR a local PRD/epic doc path; optionally a Jira epic key. Writes the breakdown to docs/specs/, publishes it as a child page of the PRD when the source is Confluence, and creates missing Jira issues under the epic when a key is passed — never duplicating existing ones.
 argument-hint: "[confluence-page-id OR local-doc-path] [optional-jira-epic-key]"
 ---
 
-# /spec — Slice an Epic into PIV-Sized Tickets
+# /spec — Turn a PRD into PIV-Sized Tickets
 
-The bridge between a strategic doc and the PIV loop. The epic doc is the destination; the PIV loop is the unit of motion; **tickets are the bridge.** `/spec` does the slicing.
+Turn a stable PRD into tickets that each fit one Plan–Implement–Validate
+(PIV) cycle. Preserve the PRD's scope; do not rewrite it or implement code.
 
-## Recommended two-session PM flow
+**Where it fits:** run in a fresh session after `/pickup`, once the PRD is
+stable (draft the PRD in a separate session). Each resulting ticket then
+enters its own PIV loop: `/pickup` → `/plan-feature` → `/execute`.
 
-**Session 1 — Draft the PRD.**
-The PM works with the agent to write or refine the PRD: goals, user stories, acceptance criteria, out-of-scope. At the end of the session, upload (or paste) the finished PRD into Confluence and note its page id. Keeping this separate from slicing avoids a bloated context window and lets the PRD stabilize before it is decomposed.
+## Inputs
 
-**Session 2 — Run `/spec`.**
-After `/pickup`, with the stable Confluence page id (or local file path) in hand, run `/spec` to decompose the PRD into tickets. The PRD is the source of truth; the agent does not re-draft it here.
+- `$1` (required): a Confluence page id or local PRD/epic document path.
+  All digits → Confluence page id; otherwise → local path.
+- `$2` (optional): a Jira epic key under which to create the tickets.
 
-> **Why two sessions?** PRD drafting and ticket decomposition are cognitively different tasks. Mixing them in one long session inflates the context window, often causes the agent to start slicing before requirements are settled, and makes it harder to review the PRD independently. The boundary also mirrors a real PM workflow.
+A Confluence source requests publication of a breakdown child page. A Jira
+epic key requests creation of missing issues.
 
-## Input
+## 1. Load Context
 
-- `$1` — **Confluence page id** (numeric, e.g. `123456`) **or** a **local file path** to the epic doc, next-epic doc (brownfield), or PRD (greenfield).
-  - Detection: if `$1` is all digits → treat as a Confluence page id and fetch it via MCP.
-  - Otherwise → treat as a local file path and read it directly.
-- `$2` *(optional)* — a **Jira epic key** (e.g. `PROJ-42`) to cross-reference. If provided, fetch the epic and include its summary, description, and child issues as additional context alongside the PRD.
-- A session started with `/pickup` — it should already have loaded the relevant codebase surface.
+- Read applicable repository instructions and the complete source document.
+- For Confluence: `mcp__atlassian__getAccessibleAtlassianResources` for the
+  `cloudId` (do not pick arbitrarily if several sites match), then
+  `mcp__atlassian__getConfluencePage` with `contentFormat: "markdown"`.
+  Record the page content, title, version, space, and URL.
+- If `$2` is supplied: read it with `mcp__atlassian__getJiraIssue`, then
+  fetch all pages of its children with `mcp__atlassian__searchJiraIssuesUsingJql`
+  (`parent = <epic-key>`), including descriptions and status.
+- Load the **Decision Log** (see CLAUDE.md) and note which `DEC-xxx` constrain
+  this epic. If a slice would contradict an Accepted decision, do not
+  silently deviate — mark it blocked and propose a new `DEC-xxx`.
+- Reuse codebase context from `/pickup` when available. Otherwise inspect
+  relevant docs (including `docs/architecture.md`), implementation, and
+  tests to ground the decomposition.
+- Read any existing breakdown for this source before creating a new one.
 
-## Process
+If the source cannot be read, report the blocker instead of inventing a
+breakdown. If an integration is unavailable, complete independent local
+work and report what remains blocked.
 
-### Step 1 — Load the PRD (source of truth)
+Treat the PRD as the authority for intended product scope and the code as
+evidence of current implementation. If the Jira epic and the PRD conflict,
+the PRD wins. Flag contradictions and missing requirements. Do not silently
+resolve product decisions or invent scope; continue with unaffected slices
+and mark blocked ones.
 
-The PRD is the source of truth for this entire decomposition. Load it before doing anything else.
+## 2. Decompose the Work
 
-**If `$1` is numeric (Confluence page id):**
+Each ticket should:
 
-1. Call `mcp__atlassian__getAccessibleAtlassianResources` to obtain the `cloudId`.
-2. Call `mcp__atlassian__getConfluencePage` with that `cloudId`, the page id, and `contentFormat: "markdown"`.
-3. Use the returned page content as the PRD.
+- Deliver one coherent outcome, preferably a vertical slice of behavior.
+- Have explicit scope and observable acceptance criteria.
+- Include a focused validation approach.
+- Be small enough to plan, implement, and validate as one focused change.
 
-**If `$1` is a file path:**
+Split independently useful outcomes or unrelated changes. Do not size
+work by plan length or promise fixed execution times. Use prerequisite
+or investigation tickets when a contract or unknown must be resolved first.
+Avoid creating work already completed by existing issues or implementation;
+identify any remaining gap instead.
 
-Read the file directly. Use its contents as the PRD.
+Assign stable local IDs such as SPEC-01. Preserve IDs on reruns and do not
+reuse retired IDs for different work.
 
-**If `$2` is provided (Jira epic key):**
+## 3. Map Dependencies
 
-1. Obtain the `cloudId` via `mcp__atlassian__getAccessibleAtlassianResources` if not already fetched.
-2. Call `mcp__atlassian__getJiraIssue` with that `cloudId`, the epic key, and `responseContentFormat: "markdown"`.
-3. Treat the returned issue (summary, description, child issues) as supplementary context. If the Jira epic and the PRD conflict, the PRD wins.
+State each ticket's prerequisites and arrange tickets into execution waves.
+The dependency graph must have no cycles; resolve cycles by changing the
+slices or extracting a shared prerequisite.
 
-Read the loaded PRD fully: the goal, user stories, architectural impact, acceptance criteria, out-of-scope.
+Mark tickets parallel-ready only when they do not depend on each other's
+output and required shared contracts are settled. Note likely file overlap
+or migration conflicts separately. Different files alone do not establish
+independence.
 
-### Step 2 — Decompose into PIV-sized slices
+## 4. Save the Breakdown
 
-Break the epic into tickets. A well-sized ticket:
+Write `docs/specs/<epic-slug>.md`. Reuse the existing path for the same
+source and preserve manual notes and existing external mappings.
 
-- Maps to **one structured plan** of 500-700 lines.
-- Is one coherent unit — a vertical slice of behavior, not a horizontal layer.
-- Has clear acceptance criteria of its own.
-- Is small enough to execute in a single PIV loop (roughly 20-60 minutes of execute time).
+Use this structure:
 
-If a slice would produce a plan longer than ~700 lines, split it further.
-
-### Step 3 — Slice for parallelizability
-
-Map dependencies between tickets. **Independent tickets** — ones that don't touch the same files or rely on each other's output — can run in **parallel worktrees** (see `/new-worktrees`). Mark which tickets are independent and which form a dependency chain. Slicing along vertical-slice-architecture seams maximizes independence.
-
-### Step 4 — Write the ticket breakdown
-
-Write to `docs/specs/<epic-slug>.md`:
-
-```
+```markdown
 # Spec: <epic name>
 
-## Epic summary — goal in 2-3 lines
+## Source and goal
+- PRD: <path or URL; version if available>
+- Jira epic: <key and URL, if supplied>
+- Breakdown page: <ID and URL, once published>
+- Constraining decisions: <DEC-xxx list, or none>
+- Goal: <2–3 sentences>
+
 ## Tickets
-   ### TICKET-1 — <title>
-   - Scope / acceptance criteria
-   - Files touched (estimate)
-   - Depends on: <none / TICKET-x>
-   ### TICKET-2 — ...
-## Dependency graph
-   <text or mermaid graph showing the order + parallel groups>
-## Suggested execution order
-   Wave 1 (parallel): TICKET-1, TICKET-3
-   Wave 2: TICKET-2 (after TICKET-1)
+
+### SPEC-01 — <outcome>
+- Outcome and scope:
+- Acceptance criteria:
+- Validation:
+- Likely files/components: <estimate, or unknown>
+- Decisions: <DEC-xxx this ticket honors, or none>
+- Depends on: <none or stable ticket IDs>
+- Open questions or blockers: <omit if none>
+- Jira issue: <key and URL once linked; existing/new/pending/blocked>
+
+## Dependencies and execution order
+<Compact dependency list or Mermaid graph, plus execution waves.>
+<Note likely integration conflicts where relevant.>
+
+## Gaps and assumptions
+<Unresolved decisions, source conflicts, or coverage limitations.>
+
+## Publication status
+<Confluence and Jira results, including any pending actions.>
 ```
 
-### Step 5 — Publish the breakdown back to Confluence
+Check that in-scope requirements are covered, acceptance criteria are
+verifiable, and dependency references resolve. Do not file tickets whose
+scope depends on an unresolved product decision; keep them marked blocked.
 
-The breakdown is a PM artifact, so it belongs where the PM works, not only in the repo. If the PRD came from
-Confluence (i.e. `$1` was a page id), publish the breakdown as a **child page of the PRD**:
+## 5. Publish to Confluence
 
-1. Obtain the `cloudId` via `mcp__atlassian__getAccessibleAtlassianResources` if not already fetched.
-2. Look for an existing page titled `Spec: <epic name> - Ticket Breakdown` in the same space
-   (`mcp__atlassian__searchConfluenceUsingCql`, scoped to the space key).
-3. If none exists, call `mcp__atlassian__createConfluencePage` with:
-   - `cloudId`, the PRD's `spaceId`
-   - `parentId` = the PRD page id (so it nests under the PRD)
-   - `title` = `Spec: <epic name> - Ticket Breakdown`
-   - `body` = the same markdown you wrote in Step 4
-   If one already exists, call `mcp__atlassian__updateConfluencePage` instead, incrementing its version.
-4. Report the resulting page id and URL back to the user.
+If the source is a Confluence page:
 
-If `$1` was a local file path rather than a Confluence page id, **skip this step** and say so. Do not invent a
-space to publish into.
+- Publish the breakdown as a child of that source page, in its space,
+  titled `Spec: <epic name> - Ticket Breakdown`.
+- Use a saved breakdown page ID when available and verify its parent.
+  Otherwise search for a matching child under the exact source page
+  (`mcp__atlassian__getConfluencePageDescendants` or
+  `mcp__atlassian__searchConfluenceUsingCql`). Do not update a page solely
+  because its title matches elsewhere.
+- Create the page with `mcp__atlassian__createConfluencePage` (`parentId` =
+  the PRD page id) if absent. Before updating with
+  `mcp__atlassian__updateConfluencePage`, read its latest content and
+  version, preserve manual additions, and use the required version field.
+  Report conflicting edits instead of overwriting them blindly.
+- Save the resulting page ID and URL in the local breakdown.
 
-> Publishing is additive. The repo copy at `docs/specs/<epic-slug>.md` stays the source the PIV loop reads;
-> the Confluence page is the shareable view for people who do not live in the repo.
+For local sources, skip Confluence publication and say so. Do not invent a
+destination. The repo copy stays the source the PIV loop reads; Confluence
+is the shareable view.
 
-### Step 6 — File the tickets in Jira
+## 6. Create Missing Jira Issues
 
-**If `$2` (a Jira epic key) was provided, this step is REQUIRED.** A breakdown nobody can assign is only half
-the job. Create the tickets for real:
+If a Jira epic key was supplied (this step is then required):
 
-1. Get the `cloudId` via `mcp__atlassian__getAccessibleAtlassianResources` if not already fetched.
-2. Read the epic with `mcp__atlassian__getJiraIssue` to learn its `project` key and confirm it exists.
-3. **Check for existing children first.** Run `mcp__atlassian__searchJiraIssuesUsingJql` with
-   `parent = <epic-key>`. For every ticket in your breakdown, compare against those summaries.
-   - If a child already covers that slice, **skip it** and report it as already existing.
-   - Only create the slices that are genuinely missing. Never create a near-duplicate of an existing child.
-4. For each missing slice call `mcp__atlassian__createJiraIssue` with:
-   - `cloudId`, `projectKey` (from step 2), `issueTypeName: "Story"` (or `"Task"` for pure chores)
-   - `parent_epic`/`parent` = the epic key from `$2`
-   - `summary` = the ticket title from your breakdown
-   - `description` = scope, acceptance criteria, files likely touched, and the `Depends on:` line
-5. Report a table of what you created (key + summary + URL) and what you skipped as already present.
+- Confirm its project, supported issue types, and parent field
+  (`mcp__atlassian__getJiraProjectIssueTypesMetadata` if unsure).
+- Reconcile each slice against saved issue mappings and all existing epic
+  children. Compare scope and acceptance criteria, not just titles.
+- Reuse matching issues and record their keys and URLs. If coverage is
+  partial or ambiguous, document the gap rather than creating a duplicate
+  or silently changing the existing issue.
+- Create missing, unblocked tickets under the epic with
+  `mcp__atlassian__createJiraIssue`, using Story (or Task for pure chores)
+  as supported by the project.
+- Include scope, acceptance criteria, validation, decisions, and
+  dependencies in each description. Include a stable source reference and
+  local ticket ID so the issue can be recognized on a later run.
+- Save each returned issue key and URL to the local breakdown immediately.
 
-If `$2` was **not** provided, skip this step and tell the user which epic key to pass to file the tickets.
+After creation, resolve dependency references to actual Jira keys. Add
+Jira dependency links (`mcp__atlassian__createIssueLink`) when supported,
+checking for existing links first. Update descriptions on newly created
+issues as needed; preserve existing issue content and report any links
+that could not be added.
 
-> Order matters: write the breakdown document first (Step 4), publish to Confluence (Step 5), then create
-> issues. If issue creation fails partway, the breakdown still exists and the run is re-runnable, because
-> step 3 makes creation idempotent.
+If no epic key was supplied, keep the tickets local and tell the user which
+epic key to pass to file them.
 
-## Output
+## 7. Reconcile and Report
 
-1. A ticket breakdown at `docs/specs/<epic-slug>.md` (always).
-2. A Confluence child page under the PRD (when the input was a Confluence page id).
-3. Real Jira issues under the epic, when an epic key was passed (Step 6). Existing children are never duplicated.
+Update the local breakdown with issue mappings, dependency links, and
+publication results. Refresh the Confluence copy with the final mappings
+when available, preserving manual content.
 
-Each ticket then enters its own PIV loop starting at `/pickup` → `/plan-feature`.
+If a write fails or its result is uncertain, check whether it succeeded
+before retrying. Do not blindly repeat creates. Preserve completed work,
+continue independent steps, and leave precise pending actions so a rerun
+can resume. Never claim publication or issue creation without confirmation.
 
-## Notes
+Report concisely:
 
-- Issue management: the course standardizes on Jira (via Atlassian MCP); GitHub Issues, Asana, and Archon's task system are equivalent — the slicing logic is the same.
-- Greenfield: the same slicing applies to MVP phases instead of epic tickets.
+- Local breakdown path and Confluence link, if published.
+- Tickets created, linked to existing issues, or blocked, with Jira links.
+- Execution waves, constraining decisions, and unresolved questions.
+- Any failed or skipped publication steps and what remains to be done.
+- Next step: pick the first wave ticket and run `/pickup <key>`.
