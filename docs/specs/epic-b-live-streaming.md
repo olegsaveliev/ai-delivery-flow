@@ -4,7 +4,7 @@
 - PRD: [Second Opinion — PRD (MVP)](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/1048577) (Confluence page 1048577; last modified 2026-08-28; status on page: *Draft — awaiting approval*). Local copy: `docs/second-opinion-prd.md`.
 - Jira epic: [KAN-2](https://osavelyev.atlassian.net/browse/KAN-2) — EPIC-B — Live Streaming (project KAN)
 - Breakdown page: [Spec: EPIC-B — Live Streaming - Ticket Breakdown](https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/9535489) (page 9535489, child of the PRD)
-- Constraining decisions: DEC-003 (fixed 2 rounds), DEC-004 (watch-only), DEC-005 (single-user, local — in-process broker is sufficient), DEC-007 (Sonnet persona tier; judge stays structured, non-streamed), DEC-008 (persist-as-it-lands), DEC-011 (architecture doc updated with the streaming design). **Proposed:** DEC-012 (run lifecycle for streaming) — gates B-T4/B-T5.
+- Constraining decisions: DEC-003 (fixed 2 rounds), DEC-004 (watch-only), DEC-005 (single-user, local — in-process broker is sufficient), DEC-007 (Sonnet persona tier; judge stays structured, non-streamed), DEC-008 (persist-as-it-lands), DEC-011 (architecture doc updated with the streaming design). **DEC-012** (run lifecycle for streaming — Accepted 2026-09-24) governs B-T4/B-T5/B-T6.
 - Story shape: `docs/specs/STORY_TEMPLATE.md`
 - Goal: Stream a debate to the client live over Server-Sent Events (PRD Phase 2) so it feels like watching a real discussion: personas appear, turns arrive token by token, rounds close, then the verdict and a terminal `done`. The stream must always end with `done` or `error`, even under failures and timeouts. Backend only — the UI that consumes it is EPIC-C (KAN-3).
 
@@ -13,6 +13,7 @@
 - `LLMService.run_turn` is synchronous and non-streaming (`messages.create`); the orchestrator fans turns out with `asyncio.to_thread` and persists each turn on its own thread as it lands (KAN-7).
 - The judge (`judge()` via `LLMService.complete`) is synchronous and schema-validated with one repair retry (KAN-8, DEC-007). It is not streamed — the verdict arrives as a single event.
 - No SSE library is installed (`pyproject.toml`); FastAPI `StreamingResponse` is enough, so adding a dependency is optional.
+- **Shipped since the first slice (2026-09-24):** the event contract + `encode_sse` + `EventSink` (KAN-17) and `LLMService.stream_turn` (KAN-18). Nothing emits or serves events yet; the orchestrator still uses `run_turn`.
 
 ## Event contract (frozen in B-T1, consumed everywhere)
 
@@ -74,76 +75,133 @@ Exactly one terminal event (`done` **or** `error`) ends every stream. The PRD §
 - Depends on: B-T1 (KAN-17), B-T2 (KAN-18)
 - Jira issue: [KAN-19](https://osavelyev.atlassian.net/browse/KAN-19) (new; linked: KAN-17 blocks, KAN-18 blocks)
 
-### B-T4 — Streaming run lifecycle & `GET /api/debates/{id}/stream` endpoint — **BLOCKED on DEC-012**
-- Outcome and scope: _As a viewer, I want to start a debate and immediately watch it stream from personas to verdict, so that I see the discussion unfold instead of waiting for a finished result._ Change `POST /api/debates` to return the `debate_id` without waiting for the run. Add a run pipeline (orchestrator → judge → persist → `verdict` → `done`) that publishes to a per-debate in-process broker. Add `GET /api/debates/{id}/stream` (`text/event-stream`) that relays events to the client. Exact lifecycle per DEC-012.
-- Acceptance criteria (as proposed in DEC-012 option (a); final shape follows the Accepted DEC):
-  - [ ] `POST /api/debates` returns `{id, status}` promptly (202/201) and the run proceeds in the background with its own DB session.
-  - [ ] `GET /api/debates/{id}/stream` streams the B-T1 contract through to `verdict` then `done`; **404** for an unknown id.
-  - [ ] A subscriber that connects mid-run first receives a replay of persisted state (`personas_assigned`, completed `turn_completed`s, `round_completed`s), then live events, with no gaps or duplicates (seq-ordered).
-  - [ ] A stream opened on an already-completed debate replays persisted state + `verdict` + `done` and closes.
-  - [ ] A judge failure (after its one repair retry) keeps the transcript (status `COMPLETED`, `verdict: null`, as today) and terminates the stream with `error{code: "judge_failed"}`.
-  - [ ] `GET /api/debates/{id}` returns the same completed aggregate as today once the run finishes. `test_debates_api.py` is updated for the new POST contract.
-- Validation: API integration tests with a stub streaming LLM (httpx streaming client): full-stream happy path; late subscriber replay; completed-debate replay; unknown id 404; judge failure → `error`. Manual check: `curl -N` against a real run.
-- Likely files/components: `backend/app/api/routes/debates.py`, `backend/app/services/debate_runner.py` (pipeline), `backend/app/services/broker.py` (per-debate pub/sub + replay), `backend/app/db/session.py` (background session), `backend/app/schemas/debate.py`, `backend/tests/test_debates_api.py`, `backend/tests/test_stream_api.py`, `docs/architecture.md` + Confluence 917506 (DEC-011)
-- Decisions: DEC-012 (Proposed — run lifecycle), DEC-004 (no inbound mid-debate endpoint), DEC-005 (in-process broker, single user), DEC-007 (judge non-streamed), DEC-008
-- Depends on: B-T1, B-T3
-- Open questions or blockers: **Blocked** until DEC-012 is Accepted. It decides: background run vs run-on-connect, the POST response contract, reconnect/replay semantics, disconnect behavior, and whether a judge failure ends in `error` or `done`.
-- Jira issue: blocked (not filed — scope depends on DEC-012)
-
-### B-T5 — Graceful close: per-debate timeout, keepalive, disconnects — **BLOCKED on DEC-012**
-- Outcome and scope: _As a viewer, I want the stream to always end cleanly, even if something hangs or I close the tab, so that the client never waits forever and a run never leaks._ Add a per-debate wall-clock timeout, periodic SSE keepalive comments, client-disconnect handling, and a guaranteed terminal event on any unexpected exception. Per-turn timeouts are in B-T2 — but as built (KAN-18) that bound is **soft**: a stream that sends only keepalive pings keeps resetting the read timeout and can exceed `turn_timeout_seconds`, so B-T5's per-debate timeout is the **outer bound** for it.
+### B-T4 — Background run lifecycle & in-process broker (POST → 202)
+- Outcome and scope: _As a decision-maker, I want starting a debate to return immediately while the debate runs on its own, so that closing or refreshing the page never loses or restarts it._ Implements the run half of DEC-012:
+  - `POST /api/debates` returns **202** `{id, status: "pending"}` without waiting.
+  - The run itself is a pipeline (orchestrator → judge → persist → `verdict` → terminal event). It executes as an `asyncio` task in an **app-lifespan-owned run registry** and opens its **own** DB session.
+  - It publishes to a **per-debate broker** that owns the debate's `EventSequencer` and keeps its **full sequenced event log in memory** while running. The broker also exposes an async subscribe API, with replay from the log, for B-T6.
+  - Startup **restart sweep** and shutdown handling are included.
+  - Concurrency cap `max_active_debates`.
+  - No HTTP streaming here (that's B-T6).
 - Acceptance criteria:
-  - [ ] The per-debate timeout also bounds a persona turn stuck on a ping-only stream (KAN-18's per-turn budget cannot). Note `asyncio.to_thread` cannot kill the worker thread, so plan how the stuck stream is abandoned or closed and how its turn is recorded.
+  - [ ] `POST /api/debates` → **202** `{id, status: "pending"}` promptly. The run proceeds in the background and completes the same aggregate `GET /api/debates/{id}` returns today. `test_debates_api.py` is updated for the new contract, with no synchronous/`?wait` mode.
+  - [ ] Runs are tracked in a lifespan-owned registry (not FastAPI `BackgroundTasks`), each with its own DB session. On shutdown, active runs are cancelled and their debates marked `FAILED`.
+  - [ ] The broker per debate owns its `EventSequencer` and appends every `SequencedEvent` to an in-memory log. `subscribe(debate_id, after_seq=None)` yields the log (optionally after `after_seq`) and then live events, with no gaps or duplicates. The log is dropped once the run is terminal and all subscribers are gone.
+  - [ ] Pipeline events:
+    - the orchestrator's events (via KAN-19's sink), then `verdict`, then `done{status: completed}`;
+    - a judge failure keeps the transcript (`COMPLETED`, `verdict: null`) and ends `error{code: "judge_failed"}`;
+    - an unexpected exception → `FAILED` + `error{code: "internal"}`.
+  - [ ] Restart sweep: on startup every `PENDING`/`RUNNING` debate is marked `FAILED`.
+  - [ ] `max_active_debates` (config, default 2). A `POST` beyond the cap → **409**, and no debate row is left `PENDING`.
+- Validation: unit tests for the broker, covering log replay then live events, `after_seq`, multiple subscribers and cleanup. Registry/pipeline tests with a stub streaming LLM cover: POST → 202 then completion, judge failure → `error`, exception → `FAILED`/`internal`, shutdown cancellation, restart sweep, and the 409 at the cap. Update `test_debates_api.py`.
+- Likely files/components: `backend/app/services/broker.py`, `backend/app/services/debate_runner.py` (pipeline + registry), `backend/app/main.py` (lifespan: registry, sweep, shutdown), `backend/app/api/routes/debates.py` (POST), `backend/app/db/session.py` (session factory for background runs), `backend/app/core/config.py` (`max_active_debates`), `backend/app/schemas/debate.py`, tests; `docs/architecture.md` + Confluence 917506 (DEC-011)
+- Decisions: **DEC-012** (Accepted — rules 1, 2 [broker/log half], 3, 4, 5), DEC-004, DEC-005 (single worker, in-process), DEC-007 (judge non-streamed), DEC-008
+- Depends on: B-T1 (KAN-17, done), B-T3 (KAN-19)
+- Jira issue: [KAN-20](https://osavelyev.atlassian.net/browse/KAN-20) (new; linked: KAN-17, KAN-19 block it)
+
+### B-T6 — `GET /api/debates/{id}/stream` SSE endpoint with replay
+- Outcome and scope: _As a viewer, I want to open (or reopen) a debate and watch it stream live from wherever it is, so that joining late, refreshing, or revisiting a finished debate all just work._ Implements the stream half of DEC-012. It's a `text/event-stream` endpoint that relays the B-T4 broker for running debates, honoring `Last-Event-ID`, and synthesizes replay from SQLite for finished/failed/interrupted debates. Every stream ends with exactly one terminal event.
+- Acceptance criteria:
+  - [ ] `GET /api/debates/{id}/stream` → `text/event-stream` frames via KAN-17's `encode_sse`; **404** for an unknown id.
+  - [ ] **Running debate:** replays the in-memory log from the start (or after `Last-Event-ID`), then live events, with no gaps or duplicates (seq-ordered). It ends with the run's terminal event and then closes.
+  - [ ] **Completed debate:** replay synthesized from SQLite (`personas_assigned`, each `turn_completed`, `round_completed` per round, `verdict` if present), then `done`, or `error{code: "judge_failed"}` when `verdict` is null. Then it closes.
+  - [ ] **`FAILED` debate** (timeout, internal, or restart-swept): replays what was persisted, then `error` with a matching code (`interrupted` for restart-swept).
+  - [ ] End-to-end: a client streaming from `POST` onward receives personas → turns (with deltas) → 2× `round_completed` → `verdict` → `done`.
+- Validation: API tests with httpx streaming and a stub streaming LLM, covering:
+  - full live stream;
+  - a mid-run join and `Last-Event-ID` resume (no gaps or duplicates);
+  - completed-debate replay;
+  - judge-failed replay;
+  - an interrupted debate;
+  - unknown id → 404.
+
+  Manual check: `curl -N` against a real run.
+- Likely files/components: `backend/app/api/routes/debates.py` (stream route), `backend/app/services/replay.py` (SQLite → events synthesis), `backend/tests/test_stream_api.py`; `docs/architecture.md` + Confluence 917506
+- Decisions: **DEC-012** (Accepted — rules 1, 2, 4, 5), DEC-004, DEC-008
+- Depends on: B-T4
+- Jira issue: [KAN-21](https://osavelyev.atlassian.net/browse/KAN-21) (new; linked: KAN-20 blocks it)
+
+### B-T5 — Graceful close: per-debate timeout, keepalive, disconnects
+- Outcome and scope: _As a viewer, I want the stream to always end cleanly, even if something hangs or I close the tab, so that the client never waits forever and a run never leaks._ This ticket covers:
+  - a per-debate wall-clock timeout, which **abandons** stuck turns per DEC-012;
+  - periodic SSE keepalive comments;
+  - client-disconnect handling, where the run continues;
+  - a guaranteed single terminal event on any path.
+
+  Per-turn timeouts are in B-T2, but as built (KAN-18) that bound is **soft**. A stream that sends only keepalive pings keeps resetting the read timeout and can exceed `turn_timeout_seconds`, so B-T5's per-debate timeout is the **outer bound** for it.
+- Acceptance criteria:
+  - [ ] The per-debate timeout also bounds a persona turn stuck on a ping-only stream, which KAN-18's per-turn budget cannot do. `asyncio.to_thread` cannot kill the worker thread, so the stuck turn is **abandoned** (DEC-012): its late result is discarded and never persisted or emitted.
   - [ ] Per-debate timeout (config, e.g. `debate_timeout_seconds`) → run cancelled, debate status `FAILED`, subscribers get `error{code: "timeout"}`; completed turns stay persisted.
   - [ ] Any unhandled exception in the run pipeline → `error{code: "internal"}` terminal event, status `FAILED` (try/finally guarantees exactly one terminal event).
   - [ ] Keepalive `: ping` comment every N seconds (config) while a stream is idle.
-  - [ ] Client disconnect frees the subscriber without affecting the run (per DEC-012); no broker/subscriber leak after the debate ends.
+  - [ ] Client disconnect frees the subscriber without affecting the run (DEC-012); no broker/subscriber leak after the debate ends.
   - [ ] No stream ever closes without exactly one `done` or `error`.
-- Validation: failure-injection tests (stub LLM that hangs → debate timeout; stub that raises → internal error), disconnect test asserting the run still completes and persists, keepalive observed with a short test interval.
+- Validation: failure-injection tests:
+  - a stub LLM that hangs or sends only pings → debate timeout, with the stuck turn abandoned and never persisted;
+  - a stub that raises → internal error.
+
+  A disconnect test asserts the run still completes and persists. A keepalive is observed with a short test interval.
 - Likely files/components: `backend/app/services/debate_runner.py`, `backend/app/services/broker.py`, `backend/app/api/routes/debates.py`, `backend/app/core/config.py`, `backend/tests/test_stream_resilience.py`
-- Decisions: DEC-012 (Proposed — disconnect semantics), DEC-008 (partial transcript kept), PRD §12 (terminal `done`/`error`, per-turn and per-debate timeouts)
-- Depends on: B-T4 (and B-T2 for per-turn timeout)
-- Open questions or blockers: **Blocked** until DEC-012 is Accepted (disconnect/cancel semantics, `FAILED` terminal behavior).
-- Jira issue: blocked (not filed — scope depends on DEC-012)
+- Decisions: **DEC-012** (Accepted — rule 5), DEC-008 (partial transcript kept), PRD §12 (terminal `done`/`error`, per-turn and per-debate timeouts)
+- Depends on: B-T4, B-T6 (and B-T2 / KAN-18 for per-turn timeout)
+- Jira issue: [KAN-22](https://osavelyev.atlassian.net/browse/KAN-22) (new; linked: KAN-20, KAN-21, KAN-18 block it)
 
 ## Dependencies and execution order
 
 ```mermaid
 graph TD
-    T1[B-T1 · Event contract & SSE encoding]
-    T2[B-T2 · Streaming LLM turns]
-    T3[B-T3 · Orchestrator emits events]
-    T4[B-T4 · Run lifecycle & /stream endpoint ·· BLOCKED DEC-012]
-    T5[B-T5 · Graceful close & timeouts ·· BLOCKED DEC-012]
+    T1[B-T1 · Event contract & SSE encoding · KAN-17 ✅]
+    T2[B-T2 · Streaming LLM turns · KAN-18 ✅]
+    T3[B-T3 · Orchestrator emits events · KAN-19]
+    T4[B-T4 · Background run lifecycle & broker · KAN-20]
+    T6[B-T6 · /stream endpoint with replay · KAN-21]
+    T5[B-T5 · Graceful close & timeouts · KAN-22]
     T1 --> T3
     T2 --> T3
     T1 --> T4
     T3 --> T4
+    T4 --> T6
     T4 --> T5
+    T6 --> T5
     T2 --> T5
 ```
 
-- **Gate:** accept (or amend) **DEC-012** in the Decision Log. Waves 1–2 don't need it.
-- **Wave 1 (parallel-ready):** B-T1, B-T2. No shared output; different files (`schemas/events.py` + `services/events.py` vs `services/llm.py`). Both may touch `core/config.py` (B-T2 adds `turn_timeout_seconds`), which is a trivial merge.
-- **Wave 2:** B-T3. Needs the frozen contract (B-T1) and `stream_turn` (B-T2).
-- **Wave 3:** B-T4, once DEC-012 is Accepted.
-- **Wave 4:** B-T5.
+- **Done:** B-T1 (KAN-17), B-T2 (KAN-18). DEC-012 is Accepted, so nothing is gated on a decision any more.
+- **Wave 2:** B-T3 (KAN-19).
+- **Wave 3:** B-T4 (KAN-20). It needs KAN-19's sink wiring to have events to publish.
+- **Wave 4:** B-T6 (KAN-21).
+- **Wave 5:** B-T5 (KAN-22).
 
-Integration notes: B-T3, B-T4, and B-T5 all touch the run path (`orchestrator.py` → `debate_runner.py`), so run them in sequence, not in parallel worktrees. B-T4 changes the `POST` contract that `test_debates_api.py` (KAN-9) asserts. EPIC-C (KAN-3) will consume this stream and the new POST contract.
+Integration notes:
+- B-T3 → B-T4 → B-T6 → B-T5 are strictly sequential. They all touch the run path (`orchestrator.py`, `debate_runner.py`, `broker.py`, `routes/debates.py`), so don't run them in parallel worktrees.
+- B-T4 changes the `POST` contract that `test_debates_api.py` (KAN-9) asserts, and EPIC-C (KAN-3) consumes the new POST + stream.
 
 ## Gaps and assumptions
-- **Run lifecycle is undecided → Proposed DEC-012.** The PRD API table has `POST` → `debate_id` and a separate `GET /{id}/stream`. The shipped KAN-9 `POST` runs the debate synchronously. Picking the model (background run with broker/replay vs run-on-connect vs POST-returns-stream) is an architectural decision, and none of the Accepted DECs cover it. B-T4 and B-T5 stay blocked until it's decided.
+- **Run lifecycle — decided (DEC-012 Accepted 2026-09-24):** option (a) with five amendments:
+  - an in-memory event log for replay while running, and SQLite-synthesized replay afterwards;
+  - a restart sweep, with `interrupted` as the error code;
+  - a lifespan task registry, with a single worker process;
+  - abandon-on-timeout plus the `max_active_debates` cap (409);
+  - POST → 202.
+
+  This split the old B-T4 into B-T4 (run + broker) and B-T6 (stream endpoint).
 - **Event set: PRD vs epic.** PRD §6 lists `personas_assigned, turn_delta, round_completed, verdict, done, error`. The KAN-2 epic adds `turn_started` and `turn_completed`. They don't conflict — the epic adds events without changing the PRD's — so B-T1 includes all 8. `turn_completed` gives the client the authoritative persisted content even if it missed deltas. Confirm, or drop them to match the PRD strictly.
-- **Mid-stream failure policy (built in KAN-18):** retry only transient failures and only before the first delta; a failure after partial text becomes a `skipped` turn, so no client sees duplicated text. The per-turn budget is soft for ping-only streams — see B-T5.
+- **Mid-stream failure policy (built in KAN-18):** only transient failures are retried, and only before the first delta. A failure after partial text becomes a `skipped` turn, so no client sees duplicated text. The per-turn budget is soft for ping-only streams — see B-T5.
 - **Judge is not token-streamed.** DEC-007 needs a schema-validated JSON verdict with repair, so the verdict arrives as one `verdict` event. Streaming the judge is out of scope.
+- **Error codes** (DEC-012): `judge_failed`, `timeout`, `internal`, `interrupted`. KAN-17's `KNOWN_ERROR_CODES` constant is still marked provisional. Update it to this set in B-T4 and drop the "provisional" note.
 - **PRD status** on Confluence still reads *Draft — awaiting approval*. EPIC-A was already sliced and shipped from this same PRD, so the scope is treated as stable. Flag it if that's wrong.
-- Frontend consumption of the stream (EventSource hook, UI) is EPIC-C and out of scope. Only the TS event types are mirrored here (B-T1).
-- Cost/latency observability beyond existing per-call logging is EPIC-D (KAN-4).
+- **Out of scope here:**
+  - Frontend consumption of the stream (EventSource hook, UI) is EPIC-C. Only the TS event types are mirrored here (B-T1).
+  - Cost/latency observability beyond existing per-call logging is EPIC-D (KAN-4).
 
 ## Publication status
-- Confluence: published as page 9535489 (child of PRD 1048577), v1, 2026-09-24 — https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/9535489
-- Jira: created KAN-17 (B-T1), KAN-18 (B-T2), KAN-19 (B-T3) as Stories under KAN-2 (KAN-17 and KAN-18 Done 2026-09-24, PRs #12/#13); `Blocks` links KAN-17→KAN-19, KAN-18→KAN-19. **Pending:** file B-T4 and B-T5 once DEC-012 is Accepted (rerun `/spec 1048577 KAN-2`), then link KAN-17/KAN-19 → B-T4, B-T4/KAN-18 → B-T5.
-- Decision Log: DEC-012 added as **Proposed** (page 1015810, v11, 2026-09-24), including the Implementation Tracker row. Awaiting approval.
+- Confluence: published as page 9535489 (child of PRD 1048577) — https://osavelyev.atlassian.net/wiki/spaces/~557058b71ec4cb4cec4df2b96f8e5302aff766/pages/9535489
+- Jira:
+  - Created KAN-17 (B-T1), KAN-18 (B-T2), KAN-19 (B-T3) as Stories under KAN-2. KAN-17 and KAN-18 were Done 2026-09-24 (PRs #12/#13).
+  - Existing `Blocks` links: KAN-17→KAN-19, KAN-18→KAN-19.
+  - Created 2026-09-24 after DEC-012 was Accepted: KAN-20 (B-T4), KAN-21 (B-T6), KAN-22 (B-T5).
+  - `Blocks` links: KAN-17→KAN-20, KAN-19→KAN-20, KAN-20→KAN-21, KAN-20→KAN-22, KAN-21→KAN-22, KAN-18→KAN-22.
+- Decision Log: DEC-012 **Accepted** (page 1015810, v13, 2026-09-24).
 
 ## Definition of Done (per ticket)
-Each ticket follows `STORY_TEMPLATE.md`: acceptance criteria met and `/validate` green, `/code-review` clean, the Decision Log "Implemented by" entry updated for the DECs it realizes (DEC-003/004 for this epic; DEC-012 once Accepted), `docs/architecture.md` and Confluence 917506 updated when the streaming design lands (DEC-011), and the commit references its governing `DEC-xxx`.
+Each ticket follows `STORY_TEMPLATE.md`: acceptance criteria met and `/validate` green, `/code-review` clean, the Decision Log "Implemented by" entry updated for the DECs it realizes (DEC-003/004/007 for this epic; DEC-012 for B-T4/B-T5/B-T6), `docs/architecture.md` and Confluence 917506 updated when the streaming design lands (DEC-011), and the commit references its governing `DEC-xxx`.
