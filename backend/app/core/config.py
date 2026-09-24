@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +29,9 @@ class Settings(BaseSettings):
     # Per-turn resilience: retry transient failures with exponential backoff.
     llm_max_retries: int = 2
     llm_backoff_base_seconds: float = 0.5
+    # Per-turn wall-clock budget for a streamed persona turn (EPIC-B, KAN-18). Spans all
+    # retry attempts; exceeding it yields a skipped turn with reason "timeout".
+    turn_timeout_seconds: float = Field(60.0, gt=0)
 
     @property
     def cors_origins_list(self) -> list[str]:
